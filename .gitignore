@@ -1,0 +1,19 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Test Data
+src/dummy_source/
+src/dummy_destination/
+test_env/
+
+# IDE/Editor
+.vscode/
+.idea/
