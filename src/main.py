@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 import threading
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLabel, QLineEdit, QPushButton, QTextEdit, QProgressBar, QFileDialog, QMessageBox)
@@ -28,6 +29,7 @@ class PhotoOrganizerApp(QMainWindow):
         
         self.init_ui()
         self.apply_styles()
+        self.load_settings()
         
     def apply_styles(self):
         # Modern Font
@@ -259,6 +261,51 @@ class PhotoOrganizerApp(QMainWindow):
             
         except Exception as e:
             self.signals.error.emit(str(e))
+
+    def get_config_path(self):
+        if os.name == 'nt':
+            base_path = os.environ.get('LOCALAPPDATA', os.path.expanduser('~'))
+            config_dir = os.path.join(base_path, 'PhotoOrganizer')
+        else:
+            config_dir = os.path.expanduser('~/.config/photoorganizer')
+            
+        if not os.path.exists(config_dir):
+            os.makedirs(config_dir)
+            
+        return os.path.join(config_dir, 'settings.json')
+
+    def load_settings(self):
+        config_path = self.get_config_path()
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r') as f:
+                    settings = json.load(f)
+                    self.entry_src.setText(settings.get('src', ''))
+                    self.entry_dest.setText(settings.get('dest', ''))
+                    self.entry_exts.setText(settings.get('exts', 'jpg, jpeg, png, arw, cr2, nef, dng, orf, rw2'))
+                    self.entry_folder_fmt.setText(settings.get('folder_fmt', '%Y/%m/%d'))
+                    self.entry_file_fmt.setText(settings.get('file_fmt', 'IMG_{seq:04d}'))
+            except Exception as e:
+                print(f"Failed to load settings: {e}")
+
+    def save_settings(self):
+        settings = {
+            'src': self.entry_src.text(),
+            'dest': self.entry_dest.text(),
+            'exts': self.entry_exts.text(),
+            'folder_fmt': self.entry_folder_fmt.text(),
+            'file_fmt': self.entry_file_fmt.text()
+        }
+        config_path = self.get_config_path()
+        try:
+            with open(config_path, 'w') as f:
+                json.dump(settings, f)
+        except Exception as e:
+            print(f"Failed to save settings: {e}")
+
+    def closeEvent(self, event):
+        self.save_settings()
+        event.accept()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
