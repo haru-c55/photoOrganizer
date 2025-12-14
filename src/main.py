@@ -2,6 +2,7 @@ import sys
 import os
 import json
 import threading
+import concurrent.futures
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLabel, QLineEdit, QPushButton, QTextEdit, QProgressBar, QFileDialog, QMessageBox)
 from PyQt5.QtCore import Qt, pyqtSignal, QObject
@@ -252,11 +253,21 @@ class PhotoOrganizerApp(QMainWindow):
             
             self.signals.log.emit(f"Starting copy of {total} files...")
             
-            for i, op in enumerate(operations, 1):
-                self.organizer.execute_copy(op)
-                self.signals.progress.emit(i)
-                self.signals.log.emit(f"Copied: {os.path.basename(op['source'])} -> {os.path.basename(op['dest'])}")
-            
+            completed_count = 0
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                # Submit all tasks
+                future_to_op = {executor.submit(self.organizer.execute_copy, op): op for op in operations}
+                
+                for future in concurrent.futures.as_completed(future_to_op):
+                    op = future_to_op[future]
+                    try:
+                        future.result()
+                        completed_count += 1
+                        self.signals.progress.emit(completed_count)
+                        self.signals.log.emit(f"Copied: {os.path.basename(op['source'])} -> {os.path.basename(op['dest'])}")
+                    except Exception as exc:
+                        self.signals.log.emit(f"Error copying {os.path.basename(op['source'])}: {exc}")
+
             self.signals.finished.emit()
             
         except Exception as e:
