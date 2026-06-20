@@ -26,7 +26,7 @@ class PhotoOrganizerApp(QMainWindow):
         self.organizer = PhotoOrganizer()
         self.signals = WorkerSignals()
         self.signals.progress.connect(self.update_progress)
-        self.signals.progress_max.connect(self.progress.setMaximum)
+        self.signals.progress_max.connect(self.update_progress_max)
         self.signals.log.connect(self.append_log)
         self.signals.finished.connect(self.on_finished)
         self.signals.error.connect(self.on_error)
@@ -202,7 +202,10 @@ class PhotoOrganizerApp(QMainWindow):
         
     def update_progress(self, value):
         self.progress.setValue(value)
-        
+
+    def update_progress_max(self, value):
+        self.progress.setMaximum(value)
+
     def on_finished(self):
         self.btn_start.setEnabled(True)
         self.append_log("Completed successfully!")
