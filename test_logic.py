@@ -37,7 +37,7 @@ def test_organizer():
     
     # Test 1: Standard format
     print("\nTest 1: Standard format (%Y/%m/%d, IMG_{seq:04d})")
-    ops = organizer.generate_operations(files, dest_dir, "%Y/%m/%d", "IMG_{seq:04d}")
+    ops, skipped = organizer.generate_operations(files, dest_dir, "%Y/%m/%d", "IMG_{seq:04d}")
     
     for op in ops:
         print(f"{os.path.basename(op['source'])} -> {op['dest']}")
@@ -60,7 +60,7 @@ def test_organizer():
 
     # Test 2: Custom format
     print("\nTest 2: Custom format (%Y-%m-%d, Photo_{seq})")
-    ops = organizer.generate_operations(files, dest_dir, "%Y-%m-%d", "Photo_{seq}")
+    ops, skipped = organizer.generate_operations(files, dest_dir, "%Y-%m-%d", "Photo_{seq}")
     
     for op in ops:
         print(f"{os.path.basename(op['source'])} -> {op['dest']}")

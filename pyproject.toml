@@ -9,4 +9,5 @@ dependencies = [
     "pyinstaller>=6.16.0",
     "pyqt5==5.15.9",
     "pyqt5-qt5==5.15.2",
+    "exifread>=3.0.0",
 ]

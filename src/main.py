@@ -1,6 +1,7 @@
 import sys
 import os
 import json
+import datetime
 import threading
 import concurrent.futures
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
@@ -11,6 +12,7 @@ from organizer import PhotoOrganizer
 
 class WorkerSignals(QObject):
     progress = pyqtSignal(int)
+    progress_max = pyqtSignal(int)
     log = pyqtSignal(str)
     finished = pyqtSignal()
     error = pyqtSignal(str)
@@ -24,6 +26,7 @@ class PhotoOrganizerApp(QMainWindow):
         self.organizer = PhotoOrganizer()
         self.signals = WorkerSignals()
         self.signals.progress.connect(self.update_progress)
+        self.signals.progress_max.connect(self.progress.setMaximum)
         self.signals.log.connect(self.append_log)
         self.signals.finished.connect(self.on_finished)
         self.signals.error.connect(self.on_error)
@@ -121,7 +124,7 @@ class PhotoOrganizerApp(QMainWindow):
         
         # Extensions
         layout.addWidget(QLabel("Extensions (comma separated):"))
-        self.entry_exts = QLineEdit("jpg, jpeg, png, arw, cr2, nef, dng, orf, rw2")
+        self.entry_exts = QLineEdit("jpg, jpeg, png, arw, cr2, nef, dng, orf, rw2, raf")
         self.entry_exts.setPlaceholderText("e.g. jpg, png, arw")
         layout.addWidget(self.entry_exts)
         
@@ -224,7 +227,22 @@ class PhotoOrganizerApp(QMainWindow):
         if not os.path.exists(src):
             QMessageBox.warning(self, "Error", "Source directory does not exist.")
             return
-            
+
+        # Check execution history for this source directory
+        history = self.load_history()
+        past_runs = [h for h in history if os.path.normpath(h['src']) == os.path.normpath(src)]
+        if past_runs:
+            last = past_runs[-1]
+            msg = (f"このソースフォルダは以前にも取り込み済みです。\n\n"
+                   f"前回実行: {last['date']}\n"
+                   f"コピー先: {last['dest']}\n\n"
+                   f"重複ファイルはハッシュ比較でスキップされますが、続行しますか？")
+            reply = QMessageBox.question(self, "取り込み履歴あり", msg,
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                self.btn_start.setEnabled(True)
+                return
+
         # Parse extensions
         extensions = [e.strip() for e in exts_str.split(',') if e.strip()]
             
@@ -238,52 +256,93 @@ class PhotoOrganizerApp(QMainWindow):
         try:
             files = self.organizer.scan_files(src, extensions)
             self.signals.log.emit(f"Found {len(files)} files.")
-            
+
             if not files:
                 self.signals.log.emit("No matching files found.")
                 self.signals.finished.emit()
                 return
-                
-            self.signals.log.emit("Generating operations...")
-            operations = self.organizer.generate_operations(files, dest, folder_fmt, file_fmt)
-            
+
+            self.signals.log.emit("Generating operations (checking for duplicates)...")
+            operations, skipped = self.organizer.generate_operations(files, dest, folder_fmt, file_fmt)
+
+            if skipped:
+                self.signals.log.emit(f"Skipped {skipped} duplicate file(s) already in destination.")
+
             total = len(operations)
             self.signals.progress.emit(0)
-            self.progress.setMaximum(total) 
-            
+            self.signals.progress_max.emit(max(total, 1))
+
+            if total == 0:
+                self.signals.log.emit("All files already exist in destination. Nothing to copy.")
+                self.signals.finished.emit()
+                return
+
             self.signals.log.emit(f"Starting copy of {total} files...")
-            
+
             completed_count = 0
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                # Submit all tasks
                 future_to_op = {executor.submit(self.organizer.execute_copy, op): op for op in operations}
-                
+
                 for future in concurrent.futures.as_completed(future_to_op):
                     op = future_to_op[future]
                     try:
-                        future.result()
+                        copied = future.result()
                         completed_count += 1
                         self.signals.progress.emit(completed_count)
-                        self.signals.log.emit(f"Copied: {os.path.basename(op['source'])} -> {os.path.basename(op['dest'])}")
+                        if copied:
+                            self.signals.log.emit(f"Copied: {os.path.basename(op['source'])} -> {os.path.basename(op['dest'])}")
+                        else:
+                            self.signals.log.emit(f"Skipped (already exists): {os.path.basename(op['dest'])}")
                     except Exception as exc:
                         self.signals.log.emit(f"Error copying {os.path.basename(op['source'])}: {exc}")
 
+            self.save_history(src, dest)
             self.signals.finished.emit()
-            
+
         except Exception as e:
             self.signals.error.emit(str(e))
 
-    def get_config_path(self):
+    def _config_dir(self):
         if os.name == 'nt':
             base_path = os.environ.get('LOCALAPPDATA', os.path.expanduser('~'))
             config_dir = os.path.join(base_path, 'PhotoOrganizer')
         else:
             config_dir = os.path.expanduser('~/.config/photoorganizer')
-            
-        if not os.path.exists(config_dir):
-            os.makedirs(config_dir)
-            
-        return os.path.join(config_dir, 'settings.json')
+        os.makedirs(config_dir, exist_ok=True)
+        return config_dir
+
+    def get_config_path(self):
+        return os.path.join(self._config_dir(), 'settings.json')
+
+    def get_history_path(self):
+        return os.path.join(self._config_dir(), 'history.json')
+
+    def load_history(self):
+        path = self.get_history_path()
+        if os.path.exists(path):
+            try:
+                with open(path, 'r') as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return []
+
+    MAX_HISTORY = 100
+
+    def save_history(self, src, dest):
+        history = self.load_history()
+        history.append({
+            'src': src,
+            'dest': dest,
+            'date': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        })
+        # Keep only the most recent entries.
+        history = history[-self.MAX_HISTORY:]
+        try:
+            with open(self.get_history_path(), 'w') as f:
+                json.dump(history, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"Failed to save history: {e}")
 
     def load_settings(self):
         config_path = self.get_config_path()
@@ -293,7 +352,7 @@ class PhotoOrganizerApp(QMainWindow):
                     settings = json.load(f)
                     self.entry_src.setText(settings.get('src', ''))
                     self.entry_dest.setText(settings.get('dest', ''))
-                    self.entry_exts.setText(settings.get('exts', 'jpg, jpeg, png, arw, cr2, nef, dng, orf, rw2'))
+                    self.entry_exts.setText(settings.get('exts', 'jpg, jpeg, png, arw, cr2, nef, dng, orf, rw2, raf'))
                     self.entry_folder_fmt.setText(settings.get('folder_fmt', '%Y/%m/%d'))
                     self.entry_file_fmt.setText(settings.get('file_fmt', 'IMG_{seq:04d}'))
             except Exception as e:
